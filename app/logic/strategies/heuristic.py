@@ -4,9 +4,12 @@ from typing import List, Optional, Tuple
 from app.schemas import Cell, PlayerTurnResponse, Position, SetupResponse, TeamID
 from app.logic.config import WINNING_LEVEL
 from app.logic.rules import (
+    find_professor_position,
+    get_adjacent_positions,
     get_empty_low_level_cells,
     get_my_professors_positions,
     get_opponent_professors,
+    get_team_professors,
     get_valid_mentor_positions,
     get_valid_moves_for_professor,
     is_winning_move,
@@ -136,4 +139,75 @@ def _opponent_can_reach(
                 target_cell = board[target.row][target.col]
                 if abs(cell_here.level - target_cell.level) <= 1:
                     return True
+    return False
+
+
+def evaluate_board(board: List[List[Cell]], team_id: TeamID) -> float:
+    """Avalia quão bom é o tabuleiro para team_id.
+
+    Usado como função de avaliação nas folhas do Minimax.
+    """
+    opp_team = TeamID.LOVELACE if team_id == TeamID.TURING else TeamID.TURING
+    my_profs = get_team_professors(team_id)
+    opp_profs = get_team_professors(opp_team)
+
+    score = 0.0
+
+    for r, row in enumerate(board):
+        for c, cell in enumerate(row):
+            if cell.professor in my_profs:
+                score += _professor_threat_value(board, r, c, cell.level)
+                score += cell.level * 1.5
+            elif cell.professor in opp_profs:
+                score -= _professor_threat_value(board, r, c, cell.level)
+                score -= cell.level * 1.5
+
+    for r, row in enumerate(board):
+        for c, cell in enumerate(row):
+            if cell.professor is not None:
+                continue
+            if cell.level == WINNING_LEVEL:
+                if _team_can_reach_cell(board, team_id, r, c):
+                    score += 4.0
+                if _team_can_reach_cell(board, opp_team, r, c):
+                    score -= 5.0
+            elif cell.level == 3:
+                if _team_can_reach_cell(board, team_id, r, c):
+                    score += 1.5
+                if _team_can_reach_cell(board, opp_team, r, c):
+                    score -= 2.0
+
+    return score
+
+
+def _professor_threat_value(
+    board: List[List[Cell]], row: int, col: int, level: int
+) -> float:
+    """Quão ameaçador é um professor baseado na proximidade de células altas."""
+    value = 0.0
+    for adj in get_adjacent_positions(board, Position(row=row, col=col)):
+        adj_cell = board[adj.row][adj.col]
+        if adj_cell.professor is None and abs(level - adj_cell.level) <= 1:
+            if adj_cell.level == WINNING_LEVEL:
+                value += 10.0
+            elif adj_cell.level == 3:
+                value += 2.0
+    return value
+
+
+def _team_can_reach_cell(
+    board: List[List[Cell]], team_id: TeamID, row: int, col: int
+) -> bool:
+    """Verifica se algum professor do time consegue mover para (row, col)."""
+    target_cell = board[row][col]
+    for prof in get_team_professors(team_id):
+        pos = find_professor_position(board, prof)
+        if pos is None:
+            continue
+        if pos.row == row and pos.col == col:
+            continue
+        if abs(pos.row - row) <= 1 and abs(pos.col - col) <= 1:
+            from_cell = board[pos.row][pos.col]
+            if abs(from_cell.level - target_cell.level) <= 1:
+                return True
     return False

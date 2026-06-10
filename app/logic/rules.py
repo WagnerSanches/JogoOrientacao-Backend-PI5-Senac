@@ -1,7 +1,8 @@
 """Regras do Jogo da Orientação."""
 
+import copy
 from typing import List, Optional, Tuple
-from app.schemas import Cell, Position, TeamID
+from app.schemas import Cell, PlayerTurnResponse, Position, TeamID
 from app.logic.config import (
     TEAM_TURING_PROFESSORS,
     TEAM_LOVELACE_PROFESSORS,
@@ -152,3 +153,74 @@ def get_empty_low_level_cells(
             if cell.professor is None and cell.level == 0:
                 result.append(Position(row=r, col=c))
     return result
+
+
+def get_opponent_team(team_id: TeamID) -> TeamID:
+    """Retorna o time adversário."""
+    return TeamID.LOVELACE if team_id == TeamID.TURING else TeamID.TURING
+
+
+def simulate_turn(
+    board: List[List[Cell]],
+    move: PlayerTurnResponse,
+) -> List[List[Cell]]:
+    """Retorna um novo tabuleiro com a jogada aplicada (não altera o original)."""
+    new_board = copy.deepcopy(board)
+
+    from_pos = find_professor_position(new_board, move.professor)
+    if from_pos is None:
+        return new_board
+
+    new_board[from_pos.row][from_pos.col].professor = None
+    new_board[move.move_to.row][move.move_to.col].professor = move.professor
+
+    if move.mentor_at is not None:
+        mr, mc = move.mentor_at.row, move.mentor_at.col
+        if new_board[mr][mc].level < WINNING_LEVEL:
+            new_board[mr][mc].level += 1
+
+    return new_board
+
+
+def generate_all_moves(
+    board: List[List[Cell]],
+    team_id: TeamID,
+) -> List[PlayerTurnResponse]:
+    """Gera todas as jogadas válidas para o time (setup não incluído)."""
+    moves = []
+    my_profs = get_my_professors_positions(board, team_id)
+
+    for prof_name, prof_pos in my_profs:
+        for move_to in get_valid_moves_for_professor(board, prof_pos):
+            if is_winning_move(board, move_to):
+                moves.append(PlayerTurnResponse(
+                    professor=prof_name,
+                    move_to=move_to,
+                    mentor_at=None,
+                ))
+                continue
+
+            mentor_options = get_valid_mentor_positions(board, move_to)
+            if not mentor_options:
+                continue
+
+            for mentor_at in mentor_options:
+                moves.append(PlayerTurnResponse(
+                    professor=prof_name,
+                    move_to=move_to,
+                    mentor_at=mentor_at,
+                ))
+
+    return moves
+
+
+def check_winner(board: List[List[Cell]]) -> Optional[TeamID]:
+    """Verifica se há vencedor: professor em célula de nível 4."""
+    for row in board:
+        for cell in row:
+            if cell.level == WINNING_LEVEL and cell.professor is not None:
+                if cell.professor in TEAM_TURING_PROFESSORS:
+                    return TeamID.TURING
+                if cell.professor in TEAM_LOVELACE_PROFESSORS:
+                    return TeamID.LOVELACE
+    return None
